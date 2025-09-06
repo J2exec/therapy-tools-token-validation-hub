@@ -1,0 +1,20 @@
+{
+  "name": "therapy-tools-token-validation-hub",
+  "version": "1.0.0",
+  "description": "Azure Functions hub for validating therapy session access tokens",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "func start",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "@azure/functions": "^4.0.0",
+    "@azure/data-tables": "^13.2.2"
+  },
+  "devDependencies": {
+    "azure-functions-core-tools": "^4.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
