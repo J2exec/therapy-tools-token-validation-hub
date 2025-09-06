@@ -4,7 +4,7 @@ import { TableClient } from '@azure/data-tables';
 // 🔐 ENVIRONMENT VARIABLES
 const connectionString = process.env.AzureWebJobsStorage;
 const allowedOrigin = process.env.ALLOWED_ORIGIN || '*';
-const tableName = 'tokens';
+const tableName = 'accesstokens';
 const failedTokenUrl = process.env.FAILED_TOKEN_URL || 'https://onlinetherapytools.com/access-denied';
 
 // 🚀 AZURE FUNCTION - TOKEN VERIFICATION & ACCESS GATE
