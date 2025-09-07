@@ -3,9 +3,29 @@ import { TableClient } from '@azure/data-tables';
 
 // 🔐 ENVIRONMENT VARIABLES
 const connectionString = process.env.AzureWebJobsStorage;
-const allowedOrigin = process.env.ALLOWED_ORIGIN || '*';
+const allowedOrigins = process.env.ALLOWED_ORIGIN 
+  ? process.env.ALLOWED_ORIGIN.split(',').map(origin => origin.trim())
+  : ['https://onlinetherapytools.com']; // fallback
 const tableName = 'accesstokens';
 const failedTokenUrl = process.env.FAILED_TOKEN_URL || 'https://onlinetherapytools.com/access-denied';
+
+// 🌐 STANDARDIZED CORS FUNCTION
+function getAllowedOrigin(request) {
+  const requestOrigin = request.headers.get('origin');
+  
+  // For development, allow localhost
+  if (requestOrigin && requestOrigin.includes('localhost')) {
+    return requestOrigin;
+  }
+  
+  // Check if request origin is in allowed list
+  if (requestOrigin && allowedOrigins.includes(requestOrigin)) {
+    return requestOrigin;
+  }
+  
+  // Default to first allowed origin
+  return allowedOrigins[0];
+}
 
 // 🚀 AZURE FUNCTION - TOKEN VERIFICATION & ACCESS GATE
 app.http('verify-token', {
@@ -18,7 +38,7 @@ app.http('verify-token', {
 
     // CORS headers
     const corsHeaders = {
-      'Access-Control-Allow-Origin': allowedOrigin,
+      'Access-Control-Allow-Origin': getAllowedOrigin(request),
       'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, Authorization',
       'Cache-Control': 'no-cache, no-store, must-revalidate'
@@ -336,7 +356,7 @@ app.http('revoke-token', {
 
     // CORS headers
     const corsHeaders = {
-      'Access-Control-Allow-Origin': allowedOrigin,
+      'Access-Control-Allow-Origin': getAllowedOrigin(request),
       'Access-Control-Allow-Methods': 'POST, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, Authorization',
       'Cache-Control': 'no-cache, no-store, must-revalidate'

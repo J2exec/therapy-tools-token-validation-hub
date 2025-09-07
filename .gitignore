@@ -3,3 +3,4 @@ local.settings.json
 .env
 .vscode/
 .DS_Store
+NOTES.md
