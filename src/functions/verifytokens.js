@@ -130,20 +130,26 @@ app.http('verify-token', {
       // Initialize table client
       const tokensClient = TableClient.fromConnectionString(connectionString, tableName);
 
-      // Query for the token across all partitions
+      // Query for the token across all partitions - prioritize new schema tokens
       const entities = tokensClient.listEntities({
         filter: `RowKey eq '${token}'`
       });
 
       let tokenEntity = null;
       for await (const entity of entities) {
-        tokenEntity = entity;
-        break; // Should only be one match
+        // Only accept tokens with new schema (must have expiresAt and activityUrl fields)
+        if (entity.expiresAt && entity.activityUrl && entity.therapistId) {
+          tokenEntity = entity;
+          break; // Found a valid new schema token
+        }
       }
 
-      // Token not found
+      // If no valid new schema token found, log details and reject
       if (!tokenEntity) {
-        context.log('❌ ERROR: Token not found in database');
+        context.log('❌ ERROR: No valid new schema token found', { 
+          token: token.substring(0, 8) + '...',
+          searchedFor: 'tokens with expiresAt, activityUrl, and therapistId fields'
+        });
         
         if (request.method === 'GET') {
           return {
@@ -160,34 +166,30 @@ app.http('verify-token', {
           headers: { 'Content-Type': 'application/json', ...corsHeaders },
           jsonBody: { 
             success: false, 
-            message: 'Invalid token',
+            message: 'Invalid token or token uses deprecated schema',
             error: 'invalid_token'
           }
         };
       }
 
-      // Handle both old and new schema formats for backward compatibility
-      const therapistId = tokenEntity.therapistId;
-      const expiresAt = tokenEntity.expiresAt || tokenEntity.expiration; // Support both new and legacy
-      const activityUrl = tokenEntity.activityUrl || tokenEntity.destination; // Support both new and legacy  
-      const isRevoked = tokenEntity.isRevoked === true; // Default to false if not set
-      const createdAt = tokenEntity.createdAt;
+      // Extract fields from new token schema only
+      const { therapistId, expiresAt, isRevoked, createdAt, activityUrl } = tokenEntity;
 
-      // Validate essential fields exist
-      if (!expiresAt || !activityUrl) {
-        context.log('❌ ERROR: Token missing essential fields', { 
-          hasExpiresAt: !!tokenEntity.expiresAt,
-          hasExpiration: !!tokenEntity.expiration,
-          hasActivityUrl: !!tokenEntity.activityUrl,
-          hasDestination: !!tokenEntity.destination,
-          therapistId 
+      // Validate essential fields exist (new schema only)
+      if (!expiresAt || !activityUrl || !therapistId) {
+        context.log('❌ ERROR: Token missing essential fields for new schema', { 
+          hasExpiresAt: !!expiresAt,
+          hasActivityUrl: !!activityUrl,
+          hasTherapistId: !!therapistId,
+          tokenPartitionKey: tokenEntity.partitionKey,
+          tokenRowKey: tokenEntity.rowKey?.substring(0, 8) + '...'
         });
         
         if (request.method === 'GET') {
           return {
             status: 302,
             headers: {
-              'Location': failedTokenUrl + '?error=invalid_schema',
+              'Location': failedTokenUrl + '?error=invalid_token_schema',
               ...corsHeaders
             }
           };
@@ -198,14 +200,14 @@ app.http('verify-token', {
           headers: { 'Content-Type': 'application/json', ...corsHeaders },
           jsonBody: { 
             success: false, 
-            message: 'Token has invalid schema',
-            error: 'invalid_schema'
+            message: 'Token has invalid schema - new schema required',
+            error: 'invalid_token_schema'
           }
         };
       }
 
-      // Check if token is manually revoked
-      if (isRevoked) {
+      // Check if token is manually revoked (new schema feature)
+      if (isRevoked === true) {
         context.log('❌ ERROR: Token has been revoked', { therapistId, token: token.substring(0, 8) + '...' });
         
         if (request.method === 'GET') {
@@ -413,15 +415,18 @@ app.http('revoke-token', {
     try {
       const tokensClient = TableClient.fromConnectionString(connectionString, tableName);
       
-      // Find the token
+      // Find the token - only new schema tokens
       const entities = tokensClient.listEntities({
         filter: `RowKey eq '${token}'`
       });
 
       let tokenEntity = null;
       for await (const entity of entities) {
-        tokenEntity = entity;
-        break;
+        // Only accept tokens with new schema (must have expiresAt and activityUrl fields)
+        if (entity.expiresAt && entity.activityUrl && entity.therapistId) {
+          tokenEntity = entity;
+          break; // Found a valid new schema token
+        }
       }
 
       if (!tokenEntity) {
@@ -430,7 +435,7 @@ app.http('revoke-token', {
           headers: { 'Content-Type': 'application/json', ...corsHeaders },
           jsonBody: { 
             success: false, 
-            message: 'Token not found' 
+            message: 'Token not found or uses deprecated schema' 
           }
         };
       }
