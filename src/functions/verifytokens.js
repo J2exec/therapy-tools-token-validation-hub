@@ -146,7 +146,43 @@ app.http('verify-token', {
         };
       }
 
-      const { therapistId, expiresAt, isRevoked, createdAt } = tokenEntity;
+      // Handle both old and new schema formats for backward compatibility
+      const therapistId = tokenEntity.therapistId;
+      const expiresAt = tokenEntity.expiresAt || tokenEntity.expiration; // Support both new and legacy
+      const activityUrl = tokenEntity.activityUrl || tokenEntity.destination; // Support both new and legacy  
+      const isRevoked = tokenEntity.isRevoked === true; // Default to false if not set
+      const createdAt = tokenEntity.createdAt;
+
+      // Validate essential fields exist
+      if (!expiresAt || !activityUrl) {
+        context.log('❌ ERROR: Token missing essential fields', { 
+          hasExpiresAt: !!tokenEntity.expiresAt,
+          hasExpiration: !!tokenEntity.expiration,
+          hasActivityUrl: !!tokenEntity.activityUrl,
+          hasDestination: !!tokenEntity.destination,
+          therapistId 
+        });
+        
+        if (request.method === 'GET') {
+          return {
+            status: 302,
+            headers: {
+              'Location': failedTokenUrl + '?error=invalid_schema',
+              ...corsHeaders
+            }
+          };
+        }
+        
+        return {
+          status: 400,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders },
+          jsonBody: { 
+            success: false, 
+            message: 'Token has invalid schema',
+            error: 'invalid_schema'
+          }
+        };
+      }
 
       // Check if token is manually revoked
       if (isRevoked) {
@@ -226,9 +262,12 @@ app.http('verify-token', {
       });
 
       // For GET requests with redirect URL, redirect to the activity
-      if (request.method === 'GET' && redirectUrl) {
+      if (request.method === 'GET' && (redirectUrl || activityUrl)) {
+        // Use provided redirect URL or fall back to token's activity URL
+        const finalRedirectUrl = redirectUrl || activityUrl;
+        
         // Add token validation info to redirect URL
-        const redirectUrlObj = new URL(redirectUrl);
+        const redirectUrlObj = new URL(finalRedirectUrl);
         redirectUrlObj.searchParams.set('validated_token', token);
         redirectUrlObj.searchParams.set('therapist_id', therapistId);
         redirectUrlObj.searchParams.set('expires_at', expirationDate.toISOString());
@@ -252,6 +291,7 @@ app.http('verify-token', {
           success: true,
           valid: true,
           therapistId: therapistId,
+          activityUrl: activityUrl,
           expiresAt: expirationDate.toISOString(),
           timeRemainingMinutes: timeRemaining,
           createdAt: createdAt,
