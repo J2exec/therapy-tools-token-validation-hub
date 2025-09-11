@@ -7,7 +7,7 @@ const allowedOrigins = process.env.ALLOWED_ORIGIN
   ? process.env.ALLOWED_ORIGIN.split(',').map(origin => origin.trim())
   : ['https://onlinetherapytools.com']; // fallback
 const tableName = 'accesstokens';
-const failedTokenUrl = process.env.FAILED_TOKEN_URL || 'https://onlinetherapytools.com/access-denied';
+const failedTokenUrl = process.env.FAILED_TOKEN_URL || 'https://onlinetherapytools.com/token-expired.html';
 
 // 🌐 STANDARDIZED CORS FUNCTION
 function getAllowedOrigin(request) {
@@ -108,7 +108,7 @@ app.http('verify-token', {
         return {
           status: 302,
           headers: {
-            'Location': failedTokenUrl + '?error=missing_token',
+            'Location': failedTokenUrl + '?reason=missing_token',
             ...corsHeaders
           }
         };
@@ -155,7 +155,7 @@ app.http('verify-token', {
           return {
             status: 302,
             headers: {
-              'Location': failedTokenUrl + '?error=invalid_token',
+              'Location': failedTokenUrl + '?reason=invalid',
               ...corsHeaders
             }
           };
@@ -189,7 +189,7 @@ app.http('verify-token', {
           return {
             status: 302,
             headers: {
-              'Location': failedTokenUrl + '?error=invalid_token_schema',
+              'Location': failedTokenUrl + '?reason=invalid',
               ...corsHeaders
             }
           };
@@ -214,7 +214,7 @@ app.http('verify-token', {
           return {
             status: 302,
             headers: {
-              'Location': failedTokenUrl + '?error=token_revoked',
+              'Location': failedTokenUrl + '?reason=revoked',
               ...corsHeaders
             }
           };
@@ -255,7 +255,7 @@ app.http('verify-token', {
           return {
             status: 302,
             headers: {
-              'Location': failedTokenUrl + '?error=token_expired',
+              'Location': failedTokenUrl + '?reason=expired',
               ...corsHeaders
             }
           };
@@ -328,7 +328,7 @@ app.http('verify-token', {
         return {
           status: 302,
           headers: {
-            'Location': failedTokenUrl + '?error=verification_failed',
+            'Location': failedTokenUrl + '?reason=error',
             ...corsHeaders
           }
         };
