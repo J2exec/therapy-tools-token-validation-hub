@@ -22,7 +22,7 @@ on:
   workflow_dispatch:
 
 env:
-  AZURE_FUNCTIONAPP_NAME: 'therapy-tools-token-validation-hub'   # set this to your function app name on Azure (FIXED: match correct endpoint)
+  AZURE_FUNCTIONAPP_NAME: 'therapytools-token-verifier'   # set this to your function app name on Azure (REVERT: back to existing function app)
   AZURE_FUNCTIONAPP_PACKAGE_PATH: '.'       # set this to the path to your function app project, defaults to the repository root
   NODE_VERSION: '20.x'                     # set this to the node version to use (supports 8.x, 10.x, 12.x)
 
