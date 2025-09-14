@@ -131,12 +131,12 @@ app.http('verify-token', {
       // Initialize table client
       const tokensClient = TableClient.fromConnectionString(connectionString, tableName);
 
-      // Query for the token across all partitions - prioritize new schema tokens
+      // Query for the exact token across all partitions
       const entities = tokensClient.listEntities({
         filter: `RowKey eq '${token}'`
       });
 
-      let tokenEntity = null;
+      let validTokens = [];
       let allFoundEntities = [];
       
       for await (const entity of entities) {
@@ -150,31 +150,54 @@ app.http('verify-token', {
           therapistIdValue: entity.therapistId,
           isRevokedValue: entity.isRevoked,
           maxLifetimeHours: entity.maxLifetimeHours,
-          requestedHours: entity.requestedHours
+          requestedHours: entity.requestedHours,
+          createdAt: entity.createdAt
         });
         
-        // Only accept tokens with new schema (must have expiresAt and activityUrl fields)
+        // Only accept tokens with complete new schema
         if (entity.expiresAt && entity.activityUrl && entity.therapistId) {
-          tokenEntity = entity;
-          break; // Found a valid new schema token
+          validTokens.push(entity);
         }
       }
 
       // Log detailed information about what we found
-      context.log('🔍 TOKEN SEARCH RESULTS:', {
+      context.log('🔍 TOKEN EXACT MATCH SEARCH:', {
         token: token.substring(0, 8) + '...',
         totalEntitiesFound: allFoundEntities.length,
-        validEntityFound: !!tokenEntity,
+        validTokensFound: validTokens.length,
         allEntities: allFoundEntities
       });
 
-      // If no valid new schema token found, log details and reject
+      // Handle multiple valid tokens (should not happen with proper token generation)
+      let tokenEntity = null;
+      if (validTokens.length === 0) {
+        context.log('❌ No valid tokens found for exact match');
+      } else if (validTokens.length === 1) {
+        tokenEntity = validTokens[0];
+        context.log('✅ Found exactly one valid token - perfect match');
+      } else {
+        // Multiple valid tokens found - this indicates a token generation issue
+        context.log('⚠️ WARNING: Multiple valid tokens found for same token string', {
+          count: validTokens.length,
+          partitionKeys: validTokens.map(t => t.partitionKey),
+          createdAtTimes: validTokens.map(t => t.createdAt)
+        });
+        
+        // Use the most recently created token as fallback
+        tokenEntity = validTokens.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0];
+        context.log('🔄 Using most recent token as fallback:', {
+          selectedPartitionKey: tokenEntity.partitionKey,
+          selectedCreatedAt: tokenEntity.createdAt
+        });
+      }
+
+      // If no valid token found with exact match, reject
       if (!tokenEntity) {
-        context.log('❌ ERROR: No valid new schema token found', { 
+        context.log('❌ ERROR: No valid token found for exact match', { 
           token: token.substring(0, 8) + '...',
-          searchedFor: 'tokens with expiresAt, activityUrl, and therapistId fields',
+          searchedFor: 'exact token match with complete schema',
           foundEntities: allFoundEntities,
-          rejectionReason: 'Missing required fields for new schema'
+          rejectionReason: 'No token with exact match and required fields'
         });
         
         if (request.method === 'GET') {
@@ -192,7 +215,7 @@ app.http('verify-token', {
           headers: { 'Content-Type': 'application/json', ...corsHeaders },
           jsonBody: { 
             success: false, 
-            message: 'Invalid token or token uses deprecated schema',
+            message: 'Invalid token - no exact match found',
             error: 'invalid_token',
             debug: { foundEntities: allFoundEntities }
           }
