@@ -7,7 +7,7 @@ const allowedOrigins = process.env.ALLOWED_ORIGIN
   ? process.env.ALLOWED_ORIGIN.split(',').map(origin => origin.trim())
   : ['https://onlinetherapytools.com']; // fallback
 const tableName = 'accesstokens';
-const failedTokenUrl = process.env.FAILED_TOKEN_URL || 'https://onlinetherapytools.com/token-expired.html';
+const failedTokenUrl = process.env.FAILED_TOKEN_URL || 'https://onlinetherapytools.com/access-denied';
 
 // 🌐 STANDARDIZED CORS FUNCTION
 function getAllowedOrigin(request) {
@@ -40,7 +40,8 @@ app.http('verify-token', {
     const corsHeaders = {
       'Access-Control-Allow-Origin': getAllowedOrigin(request),
       'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With',
+      'Access-Control-Allow-Credentials': 'false',
       'Cache-Control': 'no-cache, no-store, must-revalidate'
     };
 
@@ -108,7 +109,7 @@ app.http('verify-token', {
         return {
           status: 302,
           headers: {
-            'Location': failedTokenUrl + '?reason=missing_token',
+            'Location': failedTokenUrl + '?error=missing_token',
             ...corsHeaders
           }
         };
@@ -136,7 +137,22 @@ app.http('verify-token', {
       });
 
       let tokenEntity = null;
+      let allFoundEntities = [];
+      
       for await (const entity of entities) {
+        allFoundEntities.push({
+          partitionKey: entity.partitionKey,
+          hasExpiresAt: !!entity.expiresAt,
+          hasActivityUrl: !!entity.activityUrl,
+          hasTherapistId: !!entity.therapistId,
+          expiresAtValue: entity.expiresAt,
+          activityUrlValue: entity.activityUrl,
+          therapistIdValue: entity.therapistId,
+          isRevokedValue: entity.isRevoked,
+          maxLifetimeHours: entity.maxLifetimeHours,
+          requestedHours: entity.requestedHours
+        });
+        
         // Only accept tokens with new schema (must have expiresAt and activityUrl fields)
         if (entity.expiresAt && entity.activityUrl && entity.therapistId) {
           tokenEntity = entity;
@@ -144,18 +160,28 @@ app.http('verify-token', {
         }
       }
 
+      // Log detailed information about what we found
+      context.log('🔍 TOKEN SEARCH RESULTS:', {
+        token: token.substring(0, 8) + '...',
+        totalEntitiesFound: allFoundEntities.length,
+        validEntityFound: !!tokenEntity,
+        allEntities: allFoundEntities
+      });
+
       // If no valid new schema token found, log details and reject
       if (!tokenEntity) {
         context.log('❌ ERROR: No valid new schema token found', { 
           token: token.substring(0, 8) + '...',
-          searchedFor: 'tokens with expiresAt, activityUrl, and therapistId fields'
+          searchedFor: 'tokens with expiresAt, activityUrl, and therapistId fields',
+          foundEntities: allFoundEntities,
+          rejectionReason: 'Missing required fields for new schema'
         });
         
         if (request.method === 'GET') {
           return {
             status: 302,
             headers: {
-              'Location': failedTokenUrl + '?reason=invalid',
+              'Location': failedTokenUrl + '?error=invalid_token',
               ...corsHeaders
             }
           };
@@ -167,7 +193,8 @@ app.http('verify-token', {
           jsonBody: { 
             success: false, 
             message: 'Invalid token or token uses deprecated schema',
-            error: 'invalid_token'
+            error: 'invalid_token',
+            debug: { foundEntities: allFoundEntities }
           }
         };
       }
@@ -189,7 +216,7 @@ app.http('verify-token', {
           return {
             status: 302,
             headers: {
-              'Location': failedTokenUrl + '?reason=invalid',
+              'Location': failedTokenUrl + '?error=invalid_token',
               ...corsHeaders
             }
           };
@@ -214,7 +241,7 @@ app.http('verify-token', {
           return {
             status: 302,
             headers: {
-              'Location': failedTokenUrl + '?reason=revoked',
+              'Location': failedTokenUrl + '?error=token_revoked',
               ...corsHeaders
             }
           };
@@ -234,6 +261,24 @@ app.http('verify-token', {
       // Check if token is expired
       const now = new Date();
       const expirationDate = new Date(expiresAt);
+      
+      // 🔍 COMPREHENSIVE DATE DEBUGGING FOR LIVE TESTING
+      context.log('🔍 DATE COMPARISON DEBUG:', {
+        token: token.substring(0, 8) + '...',
+        therapistId,
+        rawExpiresAtFromDB: expiresAt,
+        rawExpiresAtType: typeof expiresAt,
+        parsedExpirationDate: expirationDate.toString(),
+        parsedExpirationDateISO: expirationDate.toISOString(),
+        isExpirationDateValid: !isNaN(expirationDate.getTime()),
+        currentTime: now.toString(),
+        currentTimeISO: now.toISOString(),
+        isCurrentTimeValid: !isNaN(now.getTime()),
+        comparisonResult: expirationDate < now,
+        timeDifferenceMS: expirationDate.getTime() - now.getTime(),
+        timeDifferenceMinutes: Math.round((expirationDate.getTime() - now.getTime()) / (1000 * 60)),
+        bothDatesValid: !isNaN(expirationDate.getTime()) && !isNaN(now.getTime())
+      });
       
       if (expirationDate < now) {
         context.log('❌ ERROR: Token is expired', {
@@ -255,7 +300,7 @@ app.http('verify-token', {
           return {
             status: 302,
             headers: {
-              'Location': failedTokenUrl + '?reason=expired',
+              'Location': failedTokenUrl + '?error=token_expired',
               ...corsHeaders
             }
           };
@@ -286,23 +331,63 @@ app.http('verify-token', {
       // For GET requests with redirect URL, redirect to the activity
       if (request.method === 'GET' && (redirectUrl || activityUrl)) {
         // Use provided redirect URL or fall back to token's activity URL
-        const finalRedirectUrl = redirectUrl || activityUrl;
+        let finalRedirectUrl = redirectUrl || activityUrl;
         
-        // Add token validation info to redirect URL
-        const redirectUrlObj = new URL(finalRedirectUrl);
-        redirectUrlObj.searchParams.set('validated_token', token);
-        redirectUrlObj.searchParams.set('therapist_id', therapistId);
-        redirectUrlObj.searchParams.set('expires_at', expirationDate.toISOString());
-        
-        context.log('🔄 Redirecting to validated activity:', redirectUrlObj.toString());
-        
-        return {
-          status: 302,
-          headers: {
-            'Location': redirectUrlObj.toString(),
-            ...corsHeaders
+        // 🛡️ VALIDATE AND SANITIZE REDIRECT URL
+        try {
+          // Ensure the URL is valid and uses HTTPS
+          const urlObj = new URL(finalRedirectUrl);
+          
+          // Check if it's one of your allowed domains
+          const isAllowedDomain = allowedOrigins.some(origin => 
+            finalRedirectUrl.startsWith(origin)
+          );
+          
+          if (!isAllowedDomain) {
+            context.log('⚠️ WARNING: Redirect URL not in allowed domains, using fallback', {
+              originalUrl: finalRedirectUrl,
+              allowedOrigins
+            });
+            finalRedirectUrl = 'https://onlinetherapytools.com/dashboard';
           }
-        };
+          
+          // Add token validation info to redirect URL
+          const redirectUrlObj = new URL(finalRedirectUrl);
+          redirectUrlObj.searchParams.set('validated_token', token);
+          redirectUrlObj.searchParams.set('therapist_id', therapistId);
+          redirectUrlObj.searchParams.set('expires_at', expirationDate.toISOString());
+          
+          context.log('🔄 Redirecting to validated activity:', redirectUrlObj.toString());
+          
+          return {
+            status: 302,
+            headers: {
+              'Location': redirectUrlObj.toString(),
+              ...corsHeaders
+            }
+          };
+          
+        } catch (urlError) {
+          context.log('❌ ERROR: Invalid redirect URL in token, using fallback', {
+            originalUrl: finalRedirectUrl,
+            error: urlError.message
+          });
+          
+          // Fallback to safe default URL
+          const fallbackUrl = new URL('https://onlinetherapytools.com/dashboard');
+          fallbackUrl.searchParams.set('validated_token', token);
+          fallbackUrl.searchParams.set('therapist_id', therapistId);
+          fallbackUrl.searchParams.set('expires_at', expirationDate.toISOString());
+          fallbackUrl.searchParams.set('error', 'invalid_activity_url');
+          
+          return {
+            status: 302,
+            headers: {
+              'Location': fallbackUrl.toString(),
+              ...corsHeaders
+            }
+          };
+        }
       }
 
       // For API calls or GET without redirect, return JSON response
@@ -328,7 +413,7 @@ app.http('verify-token', {
         return {
           status: 302,
           headers: {
-            'Location': failedTokenUrl + '?reason=error',
+            'Location': failedTokenUrl + '?error=verification_failed',
             ...corsHeaders
           }
         };
