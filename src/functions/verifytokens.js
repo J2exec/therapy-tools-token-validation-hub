@@ -351,7 +351,7 @@ app.http('verify-token', {
         createdAt: createdAt
       });
 
-      // For GET requests with redirect URL, redirect to the activity
+      // For GET requests with redirect URL, serve HTML page that preserves original URL
       if (request.method === 'GET' && (redirectUrl || activityUrl)) {
         // Use provided redirect URL or fall back to token's activity URL
         let finalRedirectUrl = redirectUrl || activityUrl;
@@ -380,14 +380,68 @@ app.http('verify-token', {
           redirectUrlObj.searchParams.set('therapist_id', therapistId);
           redirectUrlObj.searchParams.set('expires_at', expirationDate.toISOString());
           
-          context.log('🔄 Redirecting to validated activity:', redirectUrlObj.toString());
+          context.log('🔄 Serving HTML redirect to preserve original URL:', redirectUrlObj.toString());
           
+          // Return HTML page with meta refresh to preserve original tokenized URL in browser
           return {
-            status: 302,
+            status: 200,
             headers: {
-              'Location': redirectUrlObj.toString(),
+              'Content-Type': 'text/html',
               ...corsHeaders
-            }
+            },
+            body: `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Access Granted - Online Therapy Tools</title>
+  <meta http-equiv="refresh" content="1;url=${redirectUrlObj.toString()}">
+  <style>
+    body { 
+      font-family: Arial, sans-serif; 
+      text-align: center; 
+      padding: 50px; 
+      background: #f5f5f5; 
+    }
+    .container { 
+      max-width: 500px; 
+      margin: 0 auto; 
+      background: white; 
+      padding: 30px; 
+      border-radius: 10px; 
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1); 
+    }
+    .checkmark { 
+      color: #28a745; 
+      font-size: 48px; 
+      margin-bottom: 20px; 
+    }
+    .spinner {
+      border: 3px solid #f3f3f3;
+      border-top: 3px solid #007bff;
+      border-radius: 50%;
+      width: 30px;
+      height: 30px;
+      animation: spin 1s linear infinite;
+      margin: 20px auto;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="checkmark">✅</div>
+    <h1>Access Granted!</h1>
+    <p>Your session token has been validated successfully.</p>
+    <div class="spinner"></div>
+    <p>Redirecting to your activity...</p>
+    <p><small>If you are not redirected automatically, <a href="${redirectUrlObj.toString()}">click here</a>.</small></p>
+  </div>
+</body>
+</html>`
           };
           
         } catch (urlError) {
@@ -403,12 +457,66 @@ app.http('verify-token', {
           fallbackUrl.searchParams.set('expires_at', expirationDate.toISOString());
           fallbackUrl.searchParams.set('error', 'invalid_activity_url');
           
+          // Return HTML page even for fallback to preserve URL
           return {
-            status: 302,
+            status: 200,
             headers: {
-              'Location': fallbackUrl.toString(),
+              'Content-Type': 'text/html',
               ...corsHeaders
-            }
+            },
+            body: `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Access Granted - Online Therapy Tools</title>
+  <meta http-equiv="refresh" content="1;url=${fallbackUrl.toString()}">
+  <style>
+    body { 
+      font-family: Arial, sans-serif; 
+      text-align: center; 
+      padding: 50px; 
+      background: #f5f5f5; 
+    }
+    .container { 
+      max-width: 500px; 
+      margin: 0 auto; 
+      background: white; 
+      padding: 30px; 
+      border-radius: 10px; 
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1); 
+    }
+    .warning { 
+      color: #ffc107; 
+      font-size: 48px; 
+      margin-bottom: 20px; 
+    }
+    .spinner {
+      border: 3px solid #f3f3f3;
+      border-top: 3px solid #007bff;
+      border-radius: 50%;
+      width: 30px;
+      height: 30px;
+      animation: spin 1s linear infinite;
+      margin: 20px auto;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="warning">⚠️</div>
+    <h1>Access Granted</h1>
+    <p>Your token is valid, but the original activity URL had an issue.</p>
+    <div class="spinner"></div>
+    <p>Redirecting to your dashboard...</p>
+    <p><small>If you are not redirected automatically, <a href="${fallbackUrl.toString()}">click here</a>.</small></p>
+  </div>
+</body>
+</html>`
           };
         }
       }
