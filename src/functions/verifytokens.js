@@ -68,22 +68,26 @@ app.http('verify-token', {
     }
 
     let token;
+    let therapistId;
     let redirectUrl;
 
     // Handle both GET (URL parameters) and POST (JSON body) requests
     if (request.method === 'GET') {
-      // Extract token from query parameters (for direct link access)
+      // Extract token and therapist ID from query parameters (for direct link access)
       const url = new URL(request.url);
       token = url.searchParams.get('token');
+      therapistId = url.searchParams.get('therapist_id');
       redirectUrl = url.searchParams.get('redirect') || url.searchParams.get('activity');
       
       context.log('📝 GET request - Token from URL params:', token ? token.substring(0, 8) + '...' : 'missing');
+      context.log('📝 GET request - Therapist ID from URL params:', therapistId || 'missing');
     } else {
-      // Extract token from request body (for API calls)
+      // Extract token and therapist ID from request body (for API calls)
       let requestBody;
       try {
         requestBody = await request.json();
         token = requestBody.token;
+        therapistId = requestBody.therapistId;
         redirectUrl = requestBody.redirectUrl || requestBody.activityUrl;
       } catch (err) {
         context.log('❌ ERROR: Invalid JSON in request body');
@@ -98,9 +102,10 @@ app.http('verify-token', {
       }
       
       context.log('📝 POST request - Token from body:', token ? token.substring(0, 8) + '...' : 'missing');
+      context.log('📝 POST request - Therapist ID from body:', therapistId || 'missing');
     }
 
-    // Validate token parameter
+    // Validate required parameters for 2FA
     if (!token) {
       context.log('❌ ERROR: Missing token');
       
@@ -127,13 +132,26 @@ app.http('verify-token', {
       };
     }
 
+    // Handle missing therapist ID - provide fallback but log warning
+    if (!therapistId) {
+      context.log('⚠️ WARNING: Missing therapist ID, falling back to therapist_default');
+      therapistId = 'therapist_default';
+    }
+
     try {
       // Initialize table client
       const tokensClient = TableClient.fromConnectionString(connectionString, tableName);
 
-      // Query for the exact token across all partitions
+      // 🔐 2FA TOKEN VERIFICATION: Exact match on therapist ID + token
+      // This ensures only the therapist who generated the token can validate it
       const entities = tokensClient.listEntities({
-        filter: `RowKey eq '${token}'`
+        filter: `PartitionKey eq '${therapistId}' and RowKey eq '${token}'`
+      });
+
+      context.log('🔍 2FA TOKEN SEARCH:', {
+        therapistId: therapistId,
+        token: token.substring(0, 8) + '...',
+        searchFilter: `PartitionKey eq '${therapistId}' and RowKey eq '${token.substring(0, 8)}...'`
       });
 
       let validTokens = [];
@@ -547,7 +565,7 @@ app.http('revoke-token', {
       };
     }
 
-    const { token } = requestBody;
+    const { token, therapistId } = requestBody;
     if (!token) {
       return {
         status: 400,
@@ -559,12 +577,29 @@ app.http('revoke-token', {
       };
     }
 
+    if (!therapistId) {
+      return {
+        status: 400,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        jsonBody: { 
+          success: false, 
+          message: 'Missing therapistId parameter - required for 2FA token revocation' 
+        }
+      };
+    }
+
     try {
       const tokensClient = TableClient.fromConnectionString(connectionString, tableName);
       
-      // Find the token - only new schema tokens
+      // 🔐 2FA TOKEN REVOCATION: Exact match on therapist ID + token
+      // This ensures only the therapist who generated the token can revoke it
       const entities = tokensClient.listEntities({
-        filter: `RowKey eq '${token}'`
+        filter: `PartitionKey eq '${therapistId}' and RowKey eq '${token}'`
+      });
+
+      context.log('🔍 2FA TOKEN REVOCATION SEARCH:', {
+        therapistId: therapistId,
+        token: token.substring(0, 8) + '...'
       });
 
       let tokenEntity = null;
