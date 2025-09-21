@@ -319,14 +319,14 @@ app.http('verify-token', {
       }
 
       // Extract fields from new token schema only
-      const { therapistId, expiresAt, isRevoked, createdAt, activityUrl } = tokenEntity;
+      const { therapistId: entityTherapistId, expiresAt, isRevoked, createdAt, activityUrl } = tokenEntity;
 
       // Validate essential fields exist (new schema only)
-      if (!expiresAt || !activityUrl || !therapistId) {
+      if (!expiresAt || !activityUrl || !entityTherapistId) {
         context.log('❌ ERROR: Token missing essential fields for new schema', { 
           hasExpiresAt: !!expiresAt,
           hasActivityUrl: !!activityUrl,
-          hasTherapistId: !!therapistId,
+          hasTherapistId: !!entityTherapistId,
           tokenPartitionKey: tokenEntity.partitionKey,
           tokenRowKey: tokenEntity.rowKey?.substring(0, 8) + '...'
         });
@@ -354,7 +354,7 @@ app.http('verify-token', {
 
       // Check if token is manually revoked (new schema feature)
       if (isRevoked === true) {
-        context.log('❌ ERROR: Token has been revoked', { therapistId, token: token.substring(0, 8) + '...' });
+        context.log('❌ ERROR: Token has been revoked', { therapistId: entityTherapistId, token: token.substring(0, 8) + '...' });
         
         if (request.method === 'GET') {
           return {
@@ -384,7 +384,7 @@ app.http('verify-token', {
       // 🔍 COMPREHENSIVE DATE DEBUGGING FOR LIVE TESTING
       context.log('🔍 DATE COMPARISON DEBUG:', {
         token: token.substring(0, 8) + '...',
-        therapistId,
+        therapistId: entityTherapistId,
         rawExpiresAtFromDB: expiresAt,
         rawExpiresAtType: typeof expiresAt,
         parsedExpirationDate: expirationDate.toString(),
@@ -401,7 +401,7 @@ app.http('verify-token', {
       
       if (expirationDate < now) {
         context.log('❌ ERROR: Token is expired', {
-          therapistId,
+          therapistId: entityTherapistId,
           expiresAt: expirationDate.toISOString(),
           currentTime: now.toISOString(),
           expiredMinutesAgo: Math.round((now - expirationDate) / (1000 * 60))
@@ -441,7 +441,7 @@ app.http('verify-token', {
       const timeRemaining = Math.round((expirationDate - now) / (1000 * 60));
       
       context.log('✅ SUCCESS: Token verified successfully', {
-        therapistId,
+        therapistId: entityTherapistId,
         expiresAt: expirationDate.toISOString(),
         timeRemainingMinutes: timeRemaining,
         createdAt: createdAt
