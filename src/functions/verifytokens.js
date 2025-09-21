@@ -419,54 +419,29 @@ app.http('verify-token', {
           redirectUrlObj.searchParams.set('therapist_id', therapistId);
           redirectUrlObj.searchParams.set('expires_at', expirationDate.toISOString());
           
-          context.log('🔄 Fetching activity content to serve with cache headers:', redirectUrlObj.toString());
+          context.log('🔄 Redirecting to activity with validation parameters:', redirectUrlObj.toString());
           
-          try {
-            // Fetch the activity content from your site
-            const activityResponse = await fetch(redirectUrlObj.toString());
-            
-            if (activityResponse.ok) {
-              const activityContent = await activityResponse.text();
-              
-              // Calculate cache duration (time remaining until token expires)
-              const timeRemainingSeconds = Math.floor((expirationDate - now) / 1000);
-              const cacheUntil = expirationDate.toUTCString();
-              
-              context.log('✅ Serving activity with cache headers:', {
-                timeRemainingSeconds,
-                cacheUntil,
-                tokenId: token.substring(0, 8) + '...'
-              });
-              
-              // Serve the activity content directly with cache headers tied to token expiration
-              return {
-                status: 200,
-                headers: {
-                  'Content-Type': 'text/html',
-                  'Cache-Control': `private, max-age=${timeRemainingSeconds}, must-revalidate`,
-                  'Expires': cacheUntil,
-                  'Last-Modified': new Date().toUTCString(),
-                  'ETag': `"${token}"`,
-                  ...corsHeaders
-                },
-                body: activityContent
-              };
-            } else {
-              throw new Error(`Failed to fetch activity: ${activityResponse.status} ${activityResponse.statusText}`);
+          // Calculate cache duration (time remaining until token expires)
+          const timeRemainingSeconds = Math.floor((expirationDate - now) / 1000);
+          const cacheUntil = expirationDate.toUTCString();
+          
+          context.log('✅ Redirect response configured:', {
+            targetUrl: redirectUrlObj.toString(),
+            timeRemainingSeconds,
+            cacheUntil,
+            tokenId: token.substring(0, 8) + '...'
+          });
+          
+          // 302 Redirect to activity page with validation parameters
+          // This allows frontend token validation middleware to process the parameters
+          return {
+            status: 302,
+            headers: {
+              'Location': redirectUrlObj.toString(),
+              'Cache-Control': 'no-cache, no-store, must-revalidate',
+              ...corsHeaders
             }
-            
-          } catch (fetchError) {
-            context.log('❌ ERROR: Failed to fetch activity content:', fetchError.message);
-            
-            // Fallback: redirect if we can't fetch content
-            return {
-              status: 302,
-              headers: {
-                'Location': redirectUrlObj.toString(),
-                ...corsHeaders
-              }
-            };
-          }
+          };
           
         } catch (urlError) {
           context.log('❌ ERROR: Invalid redirect URL in token, using fallback', {
