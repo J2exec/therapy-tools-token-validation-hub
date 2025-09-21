@@ -175,125 +175,68 @@ app.http('verify-token', {
       // Initialize table client
       const tokensClient = TableClient.fromConnectionString(connectionString, tableName);
 
-      // 🔐 2FA TOKEN VERIFICATION: Exact match on therapist ID + token
-      // This ensures only the therapist who generated the token can validate it
-      const entities = tokensClient.listEntities({
-        filter: `PartitionKey eq '${therapistId}' and RowKey eq '${token}'`
-      });
-
-      context.log('🔍 2FA TOKEN SEARCH:', {
+      // 🔐 2FA TOKEN VERIFICATION: Direct entity lookup for exact match
+      // This is the most efficient method for thousands of therapists - O(1) lookup
+      context.log('🔍 2FA TOKEN DIRECT LOOKUP:', {
         therapistId: therapistId,
         token: token.substring(0, 8) + '...',
-        searchFilter: `PartitionKey eq '${therapistId}' and RowKey eq '${token.substring(0, 8)}...'`
+        lookupMethod: 'getEntity',
+        partitionKey: therapistId,
+        rowKey: token.substring(0, 8) + '...'
       });
 
-      let validTokens = [];
-      let allFoundEntities = [];
-      let queryExecuted = false;
-      
-      // 🔧 ENHANCED LOGGING: Database query results debugging
-      try {
-        for await (const entity of entities) {
-          queryExecuted = true;
-          allFoundEntities.push({
-            partitionKey: entity.partitionKey,
-            rowKey: entity.rowKey ? entity.rowKey.substring(0, 8) + '...' : 'missing',
-            hasExpiresAt: !!entity.expiresAt,
-            hasActivityUrl: !!entity.activityUrl,
-            hasTherapistId: !!entity.therapistId,
-            expiresAtValue: entity.expiresAt,
-            activityUrlValue: entity.activityUrl,
-            therapistIdValue: entity.therapistId,
-            isRevokedValue: entity.isRevoked,
-            maxLifetimeHours: entity.maxLifetimeHours,
-            requestedHours: entity.requestedHours,
-            createdAt: entity.createdAt,
-            isComplete: !!(entity.expiresAt && entity.activityUrl && entity.therapistId)
-          });
-          
-          // Only accept tokens with complete new schema
-          if (entity.expiresAt && entity.activityUrl && entity.therapistId) {
-            validTokens.push(entity);
-          }
-        }
-      } catch (queryError) {
-        context.log('❌ DATABASE QUERY ERROR:', {
-          errorMessage: queryError.message,
-          errorStack: queryError.stack,
-          searchQuery: `PartitionKey eq '${therapistId}' and RowKey eq '${token.substring(0, 8)}...'`
-        });
-      }
-
-      // 🔧 ENHANCED LOGGING: Complete database query results
-      context.log('🔍 DATABASE QUERY RESULTS:', {
-        searchQuery: `PartitionKey eq '${therapistId}' and RowKey eq '${token.substring(0, 8)}...'`,
-        queryExecuted: queryExecuted,
-        foundCount: allFoundEntities.length,
-        validTokenCount: validTokens.length,
-        foundEntities: allFoundEntities,
-        searchComplete: true,
-        tableSearchedIn: tableName
-      });
-      
-      for await (const entity of entities) {
-        allFoundEntities.push({
-          partitionKey: entity.partitionKey,
-          hasExpiresAt: !!entity.expiresAt,
-          hasActivityUrl: !!entity.activityUrl,
-          hasTherapistId: !!entity.therapistId,
-          expiresAtValue: entity.expiresAt,
-          activityUrlValue: entity.activityUrl,
-          therapistIdValue: entity.therapistId,
-          isRevokedValue: entity.isRevoked,
-          maxLifetimeHours: entity.maxLifetimeHours,
-          requestedHours: entity.requestedHours,
-          createdAt: entity.createdAt
-        });
-        
-        // Only accept tokens with complete new schema
-        if (entity.expiresAt && entity.activityUrl && entity.therapistId) {
-          validTokens.push(entity);
-        }
-      }
-
-      // Log detailed information about what we found
-      context.log('🔍 TOKEN EXACT MATCH SEARCH:', {
-        token: token.substring(0, 8) + '...',
-        totalEntitiesFound: allFoundEntities.length,
-        validTokensFound: validTokens.length,
-        allEntities: allFoundEntities
-      });
-
-      // Handle multiple valid tokens (should not happen with proper token generation)
       let tokenEntity = null;
-      if (validTokens.length === 0) {
-        context.log('❌ No valid tokens found for exact match');
-      } else if (validTokens.length === 1) {
-        tokenEntity = validTokens[0];
-        context.log('✅ Found exactly one valid token - perfect match');
-      } else {
-        // Multiple valid tokens found - this indicates a token generation issue
-        context.log('⚠️ WARNING: Multiple valid tokens found for same token string', {
-          count: validTokens.length,
-          partitionKeys: validTokens.map(t => t.partitionKey),
-          createdAtTimes: validTokens.map(t => t.createdAt)
+      let entityFound = false;
+      
+      try {
+        // Direct entity lookup - O(1) operation, most efficient for scale
+        tokenEntity = await tokensClient.getEntity(therapistId, token);
+        entityFound = true;
+        
+        context.log('🔍 DIRECT LOOKUP SUCCESS:', {
+          found: true,
+          partitionKey: tokenEntity.partitionKey,
+          rowKey: tokenEntity.rowKey ? tokenEntity.rowKey.substring(0, 8) + '...' : 'missing',
+          hasExpiresAt: !!tokenEntity.expiresAt,
+          hasActivityUrl: !!tokenEntity.activityUrl,
+          hasTherapistId: !!tokenEntity.therapistId,
+          isComplete: !!(tokenEntity.expiresAt && tokenEntity.activityUrl && tokenEntity.therapistId)
         });
         
-        // Use the most recently created token as fallback
-        tokenEntity = validTokens.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0];
-        context.log('🔄 Using most recent token as fallback:', {
-          selectedPartitionKey: tokenEntity.partitionKey,
-          selectedCreatedAt: tokenEntity.createdAt
-        });
+      } catch (getEntityError) {
+        if (getEntityError.statusCode === 404) {
+          context.log('🔍 DIRECT LOOKUP RESULT: Token not found (404 - expected for invalid tokens)');
+        } else {
+          context.log('❌ DIRECT LOOKUP ERROR:', {
+            errorMessage: getEntityError.message,
+            statusCode: getEntityError.statusCode,
+            errorType: getEntityError.name
+          });
+        }
+        tokenEntity = null;
+        entityFound = false;
       }
 
-      // If no valid token found with exact match, reject
+      // 🔧 ENHANCED LOGGING: Direct lookup results
+      context.log('🔍 DATABASE DIRECT LOOKUP RESULTS:', {
+        lookupMethod: 'getEntity',
+        searchedFor: {
+          partitionKey: therapistId,
+          rowKey: token.substring(0, 8) + '...'
+        },
+        entityFound: entityFound,
+        isValidSchema: tokenEntity ? !!(tokenEntity.expiresAt && tokenEntity.activityUrl && tokenEntity.therapistId) : false,
+        lookupComplete: true
+      });
+
+      // Check if token was found and has valid schema
       if (!tokenEntity) {
-        context.log('❌ ERROR: No valid token found for exact match', { 
-          token: token.substring(0, 8) + '...',
-          searchedFor: 'exact token match with complete schema',
-          foundEntities: allFoundEntities,
-          rejectionReason: 'No token with exact match and required fields'
+        context.log('❌ ERROR: No token found with direct lookup', { 
+          searchedFor: {
+            partitionKey: therapistId,
+            rowKey: token.substring(0, 8) + '...'
+          },
+          rejectionReason: 'Token does not exist in database'
         });
         
         if (request.method === 'GET') {
@@ -669,24 +612,31 @@ app.http('revoke-token', {
     try {
       const tokensClient = TableClient.fromConnectionString(connectionString, tableName);
       
-      // 🔐 2FA TOKEN REVOCATION: Exact match on therapist ID + token
+      // 🔐 2FA TOKEN REVOCATION: Direct entity lookup for exact match
       // This ensures only the therapist who generated the token can revoke it
-      const entities = tokensClient.listEntities({
-        filter: `PartitionKey eq '${therapistId}' and RowKey eq '${token}'`
-      });
-
-      context.log('🔍 2FA TOKEN REVOCATION SEARCH:', {
+      context.log('🔍 2FA TOKEN REVOCATION DIRECT LOOKUP:', {
         therapistId: therapistId,
-        token: token.substring(0, 8) + '...'
+        token: token.substring(0, 8) + '...',
+        lookupMethod: 'getEntity'
       });
 
       let tokenEntity = null;
-      for await (const entity of entities) {
-        // Only accept tokens with new schema (must have expiresAt and activityUrl fields)
-        if (entity.expiresAt && entity.activityUrl && entity.therapistId) {
-          tokenEntity = entity;
-          break; // Found a valid new schema token
+      try {
+        // Direct entity lookup - O(1) operation
+        tokenEntity = await tokensClient.getEntity(therapistId, token);
+        
+        // Verify token has valid schema
+        if (!(tokenEntity.expiresAt && tokenEntity.activityUrl && tokenEntity.therapistId)) {
+          context.log('❌ Token found but has invalid schema for revocation');
+          tokenEntity = null;
         }
+      } catch (getEntityError) {
+        if (getEntityError.statusCode === 404) {
+          context.log('🔍 REVOCATION LOOKUP: Token not found (404)');
+        } else {
+          context.log('❌ REVOCATION LOOKUP ERROR:', getEntityError.message);
+        }
+        tokenEntity = null;
       }
 
       if (!tokenEntity) {
