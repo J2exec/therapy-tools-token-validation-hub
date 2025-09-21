@@ -4,3 +4,5 @@ local.settings.json
 .vscode/
 .DS_Store
 NOTES.md
+*.md
+.npmrc

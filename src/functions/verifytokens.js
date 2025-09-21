@@ -36,11 +36,11 @@ app.http('verify-token', {
   handler: async (request, context) => {
     context.log('🔍 Token verification function triggered');
 
-    // CORS headers
+    // CORS headers - Updated to match generator hub for 2FA compatibility
     const corsHeaders = {
       'Access-Control-Allow-Origin': getAllowedOrigin(request),
       'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With',
+      'Access-Control-Allow-Headers': 'Content-Type, Accept, Authorization, X-Requested-With, X-Request-ID',
       'Access-Control-Allow-Credentials': 'false',
       'Cache-Control': 'no-cache, no-store, must-revalidate'
     };
@@ -132,10 +132,31 @@ app.http('verify-token', {
       };
     }
 
-    // Handle missing therapist ID - provide fallback but log warning
+    // Require therapist ID for 2FA security - no fallback allowed
     if (!therapistId) {
-      context.log('⚠️ WARNING: Missing therapist ID, falling back to therapist_default');
-      therapistId = 'therapist_default';
+      context.log('❌ ERROR: Missing therapist_id parameter - 2FA security requires both token AND therapist ID');
+      
+      // For GET requests, redirect to failed page with specific error
+      if (request.method === 'GET') {
+        return {
+          status: 302,
+          headers: {
+            'Location': failedTokenUrl + '?error=missing_therapist_id',
+            ...corsHeaders
+          }
+        };
+      }
+      
+      // For POST requests, return JSON error
+      return {
+        status: 400,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        jsonBody: { 
+          success: false, 
+          message: 'Missing therapist_id parameter - required for 2FA security validation',
+          error: 'missing_therapist_id'
+        }
+      };
     }
 
     try {
@@ -521,11 +542,11 @@ app.http('revoke-token', {
   handler: async (request, context) => {
     context.log('🔒 Token revocation function triggered');
 
-    // CORS headers
+    // CORS headers - Updated to match generator hub for 2FA compatibility
     const corsHeaders = {
       'Access-Control-Allow-Origin': getAllowedOrigin(request),
       'Access-Control-Allow-Methods': 'POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      'Access-Control-Allow-Headers': 'Content-Type, Accept, Authorization, X-Requested-With, X-Request-ID',
       'Cache-Control': 'no-cache, no-store, must-revalidate'
     };
 
