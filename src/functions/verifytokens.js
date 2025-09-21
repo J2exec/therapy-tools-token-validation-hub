@@ -105,6 +105,18 @@ app.http('verify-token', {
       context.log('📝 POST request - Therapist ID from body:', therapistId || 'missing');
     }
 
+    // 🔧 ENHANCED LOGGING: Complete parameter debugging
+    context.log('🔍 TOKEN VALIDATION DEBUG START:', {
+      receivedToken: token ? token.substring(0, 8) + '...' : 'missing',
+      receivedTokenLength: token ? token.length : 0,
+      receivedTherapistId: therapistId || 'missing',
+      receivedRedirect: redirectUrl || 'missing',
+      requestMethod: request.method,
+      requestUrl: request.url,
+      timestampReceived: new Date().toISOString(),
+      queryWillUse: token && therapistId ? `PartitionKey eq '${therapistId}' and RowKey eq '${token}'` : 'incomplete_parameters'
+    });
+
     // Validate required parameters for 2FA
     if (!token) {
       context.log('❌ ERROR: Missing token');
@@ -177,6 +189,51 @@ app.http('verify-token', {
 
       let validTokens = [];
       let allFoundEntities = [];
+      let queryExecuted = false;
+      
+      // 🔧 ENHANCED LOGGING: Database query results debugging
+      try {
+        for await (const entity of entities) {
+          queryExecuted = true;
+          allFoundEntities.push({
+            partitionKey: entity.partitionKey,
+            rowKey: entity.rowKey ? entity.rowKey.substring(0, 8) + '...' : 'missing',
+            hasExpiresAt: !!entity.expiresAt,
+            hasActivityUrl: !!entity.activityUrl,
+            hasTherapistId: !!entity.therapistId,
+            expiresAtValue: entity.expiresAt,
+            activityUrlValue: entity.activityUrl,
+            therapistIdValue: entity.therapistId,
+            isRevokedValue: entity.isRevoked,
+            maxLifetimeHours: entity.maxLifetimeHours,
+            requestedHours: entity.requestedHours,
+            createdAt: entity.createdAt,
+            isComplete: !!(entity.expiresAt && entity.activityUrl && entity.therapistId)
+          });
+          
+          // Only accept tokens with complete new schema
+          if (entity.expiresAt && entity.activityUrl && entity.therapistId) {
+            validTokens.push(entity);
+          }
+        }
+      } catch (queryError) {
+        context.log('❌ DATABASE QUERY ERROR:', {
+          errorMessage: queryError.message,
+          errorStack: queryError.stack,
+          searchQuery: `PartitionKey eq '${therapistId}' and RowKey eq '${token.substring(0, 8)}...'`
+        });
+      }
+
+      // 🔧 ENHANCED LOGGING: Complete database query results
+      context.log('🔍 DATABASE QUERY RESULTS:', {
+        searchQuery: `PartitionKey eq '${therapistId}' and RowKey eq '${token.substring(0, 8)}...'`,
+        queryExecuted: queryExecuted,
+        foundCount: allFoundEntities.length,
+        validTokenCount: validTokens.length,
+        foundEntities: allFoundEntities,
+        searchComplete: true,
+        tableSearchedIn: tableName
+      });
       
       for await (const entity of entities) {
         allFoundEntities.push({
