@@ -4,8 +4,14 @@
   "logging": {
     "applicationInsights": {
       "samplingSettings": {
-        "isEnabled": true
+        "isEnabled": false
       }
+    },
+    "logLevel": {
+      "default": "Information",
+      "Host.Results": "Information",
+      "Function": "Information",
+      "Host.Aggregator": "Information"
     }
   },
   "extensionBundle": {

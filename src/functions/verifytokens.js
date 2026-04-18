@@ -255,8 +255,7 @@ app.http('verify-token', {
           jsonBody: { 
             success: false, 
             message: 'Invalid token - no exact match found',
-            error: 'invalid_token',
-            debug: { foundEntities: allFoundEntities }
+            error: 'invalid_token'
           }
         };
       }
